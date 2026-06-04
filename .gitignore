@@ -41,3 +41,15 @@ docker-compose.override.yml
 
 # NOTE: commit a sanitized "appsettings.Development.example.json" (no real secrets)
 # so others know which keys are required.
+
+# --- VSCode ---
+.vscode/
+.vscode/*
+!.vscode/settings.json
+!.vscode/tasks.json
+!.vscode/launch.json
+!.vscode/extensions.json
+!.vscode/settings.json
+!.vscode/tasks.json
+!.vscode/launch.json
+!.vscode/extensions.json
