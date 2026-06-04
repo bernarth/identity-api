@@ -1,0 +1,15 @@
+<Project>
+  <Target Name="RestoreDotnetToolsAndInstallHusky"
+          BeforeTargets="Restore"
+          Condition="'$(HUSKY)' != '0' And Exists('$(MSBuildThisFileDirectory).config/dotnet-tools.json')">
+    <Exec Command="dotnet tool restore"
+          WorkingDirectory="$(MSBuildThisFileDirectory)"
+          StandardOutputImportance="Low"
+          StandardErrorImportance="High" />
+
+    <Exec Command="dotnet husky install"
+          WorkingDirectory="$(MSBuildThisFileDirectory)"
+          StandardOutputImportance="Low"
+          StandardErrorImportance="High" />
+  </Target>
+</Project>
