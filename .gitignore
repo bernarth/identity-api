@@ -1,0 +1,43 @@
+# --- .NET build output ---
+bin/
+obj/
+[Dd]ebug/
+[Rr]elease/
+x64/
+x86/
+*.dll
+*.pdb
+
+# --- Test output ---
+[Tt]est[Rr]esult*/
+*.trx
+coverage*.json
+coverage*.xml
+*.coverage
+
+# --- Secrets / local config (NEVER commit these) ---
+# These hold the JWT signing key, DB password, etc.
+appsettings.Development.json
+appsettings.*.local.json
+.env
+*.env.local
+# User-secrets are stored outside the repo by the SDK, but ignore any stray copy:
+secrets.json
+
+# --- IDE / editor ---
+.vs/
+.idea/
+*.user
+*.suo
+*.userprefs
+
+# --- OS noise ---
+.DS_Store
+Thumbs.db
+
+# --- Docker ---
+# (compose files ARE committed; only ignore local overrides)
+docker-compose.override.yml
+
+# NOTE: commit a sanitized "appsettings.Development.example.json" (no real secrets)
+# so others know which keys are required.
