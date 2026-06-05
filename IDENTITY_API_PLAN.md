@@ -285,23 +285,21 @@ POSTGRES_DB=identity_db
 
 ```yaml
 services:
-  identity-db:
-    image: postgres:17-alpine
+  db:
+    image: postgres:16
+    container_name: postgres_dev
+    restart: always
     environment:
       POSTGRES_USER: ${POSTGRES_USER}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
       POSTGRES_DB: ${POSTGRES_DB}
     ports:
-      - "5434:5432"    # 5434 on host to avoid clash with movies API on 5433
+      - "5433:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
 
-  identity-api:
-    build: .
-    depends_on:
-      - identity-db
-    environment:
-      ASPNETCORE_ENVIRONMENT: Development
-    ports:
-      - "5001:8080"
+volumes:
+  postgres_data:
 ```
 
 Run with: `docker compose up -d --build`
