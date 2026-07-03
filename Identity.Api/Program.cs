@@ -1,4 +1,5 @@
 using Identity.Api.Domain;
+using Identity.Api.Features.Tokens;
 using Identity.Api.Infrastructure.Data;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.EntityFrameworkCore;
@@ -21,6 +22,10 @@ builder.Services.AddIdentity<ApplicationUser, IdentityRole>(options =>
         options.User.RequireUniqueEmail = true;
     })
     .AddEntityFrameworkStores<ApplicationDbContext>();
+
+builder.Services.Configure<JwtOptions>(builder.Configuration.GetSection("Jwt"));
+
+builder.Services.AddScoped<ITokenService, TokenService>();
 
 WebApplication app = builder.Build();
 

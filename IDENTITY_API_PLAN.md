@@ -137,7 +137,7 @@ Refresh tokens are **stored hashed** (SHA-256). The raw token is only ever retur
 // 200 OK
 {
   "accessToken": "eyJ...",
-  "refreshToken": "base64url-random-256-bits",
+  "refreshToken": "base64-random-512-bits",
   "accessTokenExpiresAt": "2026-05-25T14:00:00Z",
   "tokenType": "Bearer"
 }
@@ -146,7 +146,7 @@ Refresh tokens are **stored hashed** (SHA-256). The raw token is only ever retur
 **Refresh**
 ```json
 // POST /api/auth/refresh
-{ "refreshToken": "base64url-random-256-bits" }
+{ "refreshToken": "base64-random-512-bits" }
 
 // 200 OK — same shape as login response (new pair, old refresh token revoked)
 ```
@@ -154,7 +154,7 @@ Refresh tokens are **stored hashed** (SHA-256). The raw token is only ever retur
 **Revoke**
 ```json
 // POST /api/auth/revoke  [Authorization: Bearer <access_token>]
-{ "refreshToken": "base64url-random-256-bits" }
+{ "refreshToken": "base64-random-512-bits" }
 
 // 204 No Content
 ```
@@ -170,15 +170,17 @@ Refresh tokens are **stored hashed** (SHA-256). The raw token is only ever retur
   "Jwt": {
     "Key": "<minimum 32-char random secret — same key shared with consumer APIs>",
     "Issuer": "https://id.issuer.com",
+    "Audience": "<fixed value shared with every consumer API — server-controlled>",
     "AccessTokenExpiryMinutes": 15,
     "RefreshTokenExpiryDays": 7
   }
 }
 ```
 
-The `Issuer` here must match what movies API has in its own `appsettings.Development.json`.
-The `Key` must also match. The `Audience` is set per-consumer (movies API sets its own audience;
-the token includes it as a claim when issued).
+The `Issuer`, `Key` **and `Audience`** must match what each consumer API has in its own
+`appsettings.Development.json`. The audience is **server-fixed** (ARCHITECTURE decision #10):
+Identity.Api stamps `aud` from its own config; clients never choose it. A client-supplied
+audience would let any caller mint tokens aimed at any consumer.
 
 ### JWT Claims
 
@@ -190,7 +192,7 @@ family_name  → user.LastName
 role         → ["User"] or ["Admin", "User"]
 jti          → Guid.NewGuid() (unique token ID)
 iss          → https://id.issuer.com
-aud          → the requesting audience (passed as query param or hardcoded per deployment)
+aud          → fixed value from Jwt:Audience config (server-controlled; clients never pick it)
 iat          → issued-at (Unix timestamp)
 exp          → iat + 15 minutes
 ```
@@ -228,6 +230,11 @@ This prevents refresh token reuse. If an attacker steals a refresh token and use
 - [ ] Rate limiting on `/api/auth/login` and `/api/auth/register` (use `Microsoft.AspNetCore.RateLimiting`)
 - [ ] `appsettings.Development.json` is in `.gitignore` (never commit secrets)
 - [ ] JWT Key is at least 256 bits (32 characters)
+- [ ] Account lockout actually enforced — password check via `SignInManager.CheckPasswordSignInAsync(..., lockoutOnFailure: true)`
+- [ ] Rate limiting is **per-IP** and also covers `/api/auth/refresh`
+- [ ] Unique index on `RefreshTokens.Token`
+- [ ] Refresh-token **reuse detection**: a revoked token presented at `/refresh` revokes the user's whole token family
+- [ ] Production secrets (JWT key, DB password) injected via environment variables — never baked into the image
 
 ---
 
@@ -245,7 +252,8 @@ public class ApplicationDbContext : IdentityDbContext<ApplicationUser>
         base.OnModelCreating(builder); // required — sets up Identity tables
 
         builder.Entity<RefreshToken>()
-            .HasIndex(rt => rt.Token);  // index for fast lookup on each request
+            .HasIndex(rt => rt.Token)
+            .IsUnique();                // unique — lookups use SingleOrDefault, the DB enforces it
 
         builder.Entity<RefreshToken>()
             .HasOne(rt => rt.User)
@@ -269,6 +277,8 @@ foreach (var role in new[] { "Admin", "User" })
 }
 ```
 
+Also seed the **first admin user** from config (`Seed:AdminEmail`, `Seed:AdminPassword`) in this same startup block using `UserManager` — ARCHITECTURE decision #7; solves the chicken-and-egg problem.
+
 ---
 
 ## Docker / Dev Setup
@@ -286,15 +296,15 @@ POSTGRES_DB=identity_db
 ```yaml
 services:
   db:
-    image: postgres:16
-    container_name: postgres_dev
+    image: postgres:17-alpine
+    container_name: identity_db
     restart: always
     environment:
       POSTGRES_USER: ${POSTGRES_USER}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
       POSTGRES_DB: ${POSTGRES_DB}
     ports:
-      - "5433:5432"
+      - "5432:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
 
@@ -315,7 +325,7 @@ The movies API (and any future API) needs zero changes beyond what it already ha
   "Jwt": {
     "Key": "<same key as Identity.Api>",
     "Issuer": "https://id.issuer.com",
-    "Audience": "https://movies.audience.com"
+    "Audience": "<the same fixed audience value Identity.Api issues>"
   }
 }
 ```

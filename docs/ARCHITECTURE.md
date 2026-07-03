@@ -69,8 +69,13 @@ Status legend: **Decided** = build it this way; **Deferred** = revisit at the no
 | 7   | **First-admin bootstrap**     | **Seed from config** at startup                                                       | Decided      | `Seed:AdminEmail` / password seeded alongside roles. Solves the chicken-and-egg problem.                                                               |
 | 8   | **Testing**                   | **Unit tests + integration tests** (Testcontainers Postgres)                          | Decided      | Unit-test pure logic (e.g. `TokenService`); integration-test the auth flows over real HTTP + DB. Don't chase 100% coverage.                            |
 | 9   | **CORS**                      | **Explicit policy**, documented                                                       | Decided      | Add a named dev policy; document the allowed origins in the README.                                                                                    |
-| 10  | **Audience (`aud`) handling** | TBD                                                                                   | **Deferred** | Revisit at the token-design chapter (Workbook Ch5). The plan's client-supplied `aud` is weak; we'll likely move to a server-fixed audience/allowlist.  |
-| 11  | **Logging / health**          | **Serilog** (structured logs) + `**/health`** endpoint                                | Decided      | Low effort, high signal for a "production-shaped" portfolio API.                                                                                       |
+| 10  | **Audience (`aud`) handling** | **Server-fixed** `aud` from `Jwt:Audience` config                                                                                   | Decided      | **Closed at Ch5 (2026-07-02):** the server stamps `aud`; clients never choose it. Every consumer API validates the same fixed value. Move to a server-side allowlist only if a real per-consumer need appears.  |
+| 11  | **Logging / health**          | **Serilog** (structured logs) + a `/health` endpoint                                | Decided      | Low effort, high signal for a "production-shaped" portfolio API.                                                                                       |
+| 12  | **Password check & lockout**  | `SignInManager.CheckPasswordSignInAsync(..., lockoutOnFailure: true)`                 | Decided      | `UserManager.CheckPasswordAsync` bypasses the lockout counter configured in `Program.cs`, so lockout would never fire. Wire response stays a uniform `401` — never reveal lockout state. |
+| 13  | **Rate limiting shape**       | **Per-IP** fixed window (5/min) on `login`, `register` **and `refresh`**              | Decided      | The `AddFixedWindowLimiter("auth", ...)` overload is one *global* bucket. Use `AddPolicy` + `RateLimitPartition.GetFixedWindowLimiter` keyed by client IP.                              |
+| 14  | **Refresh token index**       | **Unique** index on `RefreshTokens.Token`                                             | Decided      | Lookups use `SingleOrDefaultAsync`; the DB should enforce what the code assumes. `.IsUnique()` + a migration.                                                                           |
+| 15  | **Reuse detection**           | Revoked token presented at `/refresh` ⇒ revoke the user's **whole token family**      | Decided      | This is what makes rotation actually catch a stolen token. Legitimate user just logs in again.                                                                                          |
+| 16  | **Token service location**    | `Features/Tokens/` (move from `Services/`)                                            | Decided      | Matches the decided feature-organized layout; one folder move + namespace update.                                                                                                       |
 
 
 ### Result pattern + ProblemDetails
@@ -98,5 +103,5 @@ understand them properly rather than copy a default.
 
 
 
-- **Audience (`aud`) handling (from #10).** Decided later at Workbook Ch5. The question: should the *client* pick its audience (current plan) or should the *server* control it? Short version of the concern: a client choosing its own `aud` can mint tokens aimed at any consumer.
+- ~~**Audience (`aud`) handling (from #10).**~~ **Resolved 2026-07-02** — server-fixed audience from `Jwt:Audience` config; see decision #10. The concern that drove it: a client choosing its own `aud` can mint tokens aimed at any consumer.
 
