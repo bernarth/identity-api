@@ -1,11 +1,14 @@
+using System.Security.Claims;
 using System.Security.Cryptography;
 using System.Text;
 using Identity.Api.Domain;
 using Identity.Api.Features.Auth.Dtos;
 using Identity.Api.Features.Tokens;
 using Identity.Api.Infrastructure.Data;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
 using SignInResult = Microsoft.AspNetCore.Identity.SignInResult;
 
@@ -99,4 +102,68 @@ public class AuthController(
 
     private static string HashToken(string token) =>
         Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(token)));
+
+    [HttpPost("refresh")]
+    public async Task<IActionResult> RefreshAsync(RefreshTokenRequest request)
+    {
+        string hashedToken = HashToken(request.RefreshToken);
+
+        RefreshToken? storedToken = await dbContext.RefreshTokens
+            .Include(rt => rt.User)
+            .SingleOrDefaultAsync(rt => rt.Token == hashedToken);
+
+        if (storedToken is null)
+        {
+            return Unauthorized();
+        }
+
+        if (storedToken.IsRevoked)
+        {
+            // reuse of a rotated token so, we assume theft and kill all sessions
+            await dbContext.RefreshTokens
+                .Where(rt => rt.UserId == storedToken.UserId && !rt.IsRevoked)
+                .ExecuteUpdateAsync(setters => setters
+                    .SetProperty(rt => rt.IsRevoked, true)
+                    .SetProperty(rt => rt.RevokedAt, DateTime.UtcNow));
+
+            return Unauthorized();
+        }
+
+        if (storedToken.ExpiresAt <= DateTime.UtcNow)
+        {
+            return Unauthorized();
+        }
+
+        storedToken.IsRevoked = true;
+        storedToken.RevokedAt = DateTime.UtcNow;
+
+        AuthResponse response = await IssueTokenPairAsync(storedToken.User);
+
+        storedToken.ReplacedByToken = HashToken(response.RefreshToken);
+        await dbContext.SaveChangesAsync();
+
+        return Ok(response);
+    }
+
+    [Authorize]
+    [HttpPost("revoke")]
+    public async Task<IActionResult> RevokeAsync(RevokeTokenRequest request)
+    {
+        string? userId = User.FindFirstValue(ClaimTypes.NameIdentifier);
+        string hashedToken = HashToken(request.RefreshToken);
+
+        RefreshToken? storedToken = await dbContext.RefreshTokens
+            .SingleOrDefaultAsync(rt => rt.Token == hashedToken && rt.UserId == userId);
+
+        if (storedToken is null || storedToken.IsRevoked)
+        {
+            return Unauthorized();
+        }
+
+        storedToken.IsRevoked = true;
+        storedToken.RevokedAt = DateTime.UtcNow;
+        await dbContext.SaveChangesAsync();
+
+        return NoContent();
+    }
 }
