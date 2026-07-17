@@ -113,7 +113,12 @@ Refresh tokens are **stored hashed** (SHA-256). The raw token is only ever retur
 | POST | `/api/auth/login` | No | Returns access token + refresh token |
 | POST | `/api/auth/refresh` | No | Exchange refresh token for new token pair |
 | POST | `/api/auth/revoke` | Yes (Bearer) | Invalidate a specific refresh token (logout) |
-| POST | `/api/auth/register-admin` | Yes (Admin role) | Create admin accounts |
+| PUT | `/api/users/{id}/role` | Yes (Admin role) | Replace a user's role (promote/demote); revokes their refresh tokens |
+| POST | `/api/users/{id}/block` | Yes (Admin role) | Lock the account (Identity lockout) + revoke refresh tokens |
+| POST | `/api/users/{id}/unblock` | Yes (Admin role) | Clear the lockout |
+| DELETE | `/api/users/{id}` | Yes (Admin role) | Hard-delete the account (reviewer-cleanup use case) |
+
+> **Re-scoped 2026-07-13** (ARCHITECTURE #18/#19): the originally planned `POST /api/auth/register-admin` was dropped — an admin choosing another admin's password is an anti-pattern; users self-register (always role `User`) and an admin promotes them. Admin endpoints reject self-targeting.
 
 ### Request / Response shapes
 
@@ -278,6 +283,8 @@ foreach (var role in new[] { "Admin", "User" })
 ```
 
 Also seed the **first admin user** from config (`Seed:AdminEmail`, `Seed:AdminPassword`) in this same startup block using `UserManager` — ARCHITECTURE decision #7; solves the chicken-and-egg problem.
+
+**Updated 2026-07-13:** the whole seed block (roles + first admin) is guarded by an **empty-users check** — it only runs when no users exist yet, so it is permanently inert once the API has real accounts. Deployed seed credentials arrive as env vars (`Seed__AdminEmail` / `Seed__AdminPassword`), never committed.
 
 ---
 

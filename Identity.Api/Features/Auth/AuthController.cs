@@ -48,7 +48,6 @@ public class AuthController(
             return ValidationProblem(ModelState);
         }
 
-        // the user role must already exist for now
         await userManager.AddToRoleAsync(user, "User");
 
         return Created();
@@ -120,11 +119,7 @@ public class AuthController(
         if (storedToken.IsRevoked)
         {
             // reuse of a rotated token so, we assume theft and kill all sessions
-            await dbContext.RefreshTokens
-                .Where(rt => rt.UserId == storedToken.UserId && !rt.IsRevoked)
-                .ExecuteUpdateAsync(setters => setters
-                    .SetProperty(rt => rt.IsRevoked, true)
-                    .SetProperty(rt => rt.RevokedAt, DateTime.UtcNow));
+            await dbContext.RevokeActiveRefreshTokensAsync(storedToken.UserId);
 
             return Unauthorized();
         }

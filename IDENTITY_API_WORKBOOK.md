@@ -296,45 +296,59 @@ Token rotation means every time a refresh token is used, it is immediately inval
 
 ---
 
-## Chapter 8 — Roles & Admin Registration
+## Chapter 8 — Roles & User Administration
+
+> **Re-scoped 2026-07-13** (ARCHITECTURE #18/#19): no `/register-admin`, no dynamic role creation. Single public register + admin-only user management.
 
 ### Concept
 
-Roles are seeded once at startup and then assigned to users at registration time. Because roles are embedded as claims in the JWT, downstream APIs can use `[Authorize(Roles = "Admin")]` without any database call. The admin registration endpoint is itself protected — only an existing admin can create another admin.
+Roles are seeded once at startup because a role name is a *compile-time contract*: it only means something if some consumer API has `[Authorize(Roles = "ThatRole")]` compiled into it, so new roles arrive with code — never through an endpoint. Because roles are embedded as claims in the JWT, downstream APIs authorize without any database call. Registration is a single public endpoint that always assigns `User`; everything privileged happens *after* registration through admin-only user management: promote/demote (role change), block/unblock (Identity lockout), and delete. The catch that makes this chapter interesting: a JWT is stateless, so none of these changes touch already-issued tokens — you must revoke the target's refresh tokens yourself and accept the ≤15-minute access-token window.
 
 ### Your Task
 
-**Files you will create:** no new files — modify `Program.cs` and `AuthController.cs`.
+**Files you will create:** `Features/Users/UsersController.cs` + its `Dtos/` — plus modify `Program.cs`.
 
-1. In `Program.cs`, after `app.Build()` and before `app.Run()`, add role seeding:
+1. In `Program.cs`, after `app.Build()` and before `app.Run()`, seed roles and the first admin (a first version exists from an unlocked session — your job is the guard):
   - Create a scope with `app.Services.CreateScope()`.
-  - Resolve `RoleManager<IdentityRole>` from the scope.
-  - For each role name (`"Admin"`, `"User"`): check `RoleExistsAsync` and if false, call `CreateAsync`.
-2. Implement `POST /register-admin` in `AuthController`:
-  - Decorate with `[Authorize(Roles = "Admin")]`.
-  - Same logic as regular register, but assign the `Admin` role instead of `User`.
-3. Test the full role flow with Postman or a `.http` file:
-  - Register a regular user → login → inspect the JWT on jwt.io → confirm `role: "User"`.
-  - Use an existing admin token to call `/register-admin` → login as new admin → confirm `role: "Admin"`.
+  - **Guard: run the whole seed block only when the users table is empty** (`userManager.Users` is an `IQueryable` — one `AnyAsync`). Once real users exist the seed is permanently inert, so leaked seed config can never resurrect a deleted bootstrap admin.
+  - Create `"Admin"` and `"User"` via `RoleManager`, then the first admin from `Seed:AdminEmail` / `Seed:AdminPassword` (env vars `Seed__AdminEmail` / `Seed__AdminPassword` in deployment — never committed).
+2. Create `UsersController` (`[Route("api/users")]`, `[Authorize(Roles = "Admin")]` on the class) and implement `PUT /api/users/{id}/role` with body `{ "role": "Admin" }`:
+  - `404` if the user doesn't exist; validation problem if the role doesn't exist — check `RoleManager.RoleExistsAsync` *first*, the EF store's `AddToRoleAsync` throws on a missing role.
+  - Replace semantics: `RemoveFromRolesAsync` the current roles, then add the new one.
+  - Revoke the user's active refresh tokens, return `204 No Content`.
+  - Reject changing **your own** role — simplest guard against demoting the last admin.
+3. Implement `POST /api/users/{id}/block` and `POST /api/users/{id}/unblock`:
+  - Block = `SetLockoutEndDateAsync(user, DateTimeOffset.MaxValue)`; unblock = `SetLockoutEndDateAsync(user, null)`.
+  - On block, also revoke the user's active refresh tokens — login already respects lockout (ARCHITECTURE #12), but `/refresh` never checks a password, so an unrevoked refresh token would sail straight past the lockout.
+  - Reject blocking yourself.
+4. Implement `DELETE /api/users/{id}` with `UserManager.DeleteAsync`; reject deleting yourself. Investigate what happens to the user's `RefreshTokens` rows — what is the FK delete behavior?
+5. Test the full flow with Postman or a `.http` file:
+  - Register a user → login → inspect the JWT on jwt.io → confirm `role: "User"`.
+  - Login as the seeded admin → promote the user → user's *old* refresh token is dead, they log in again → new JWT says `role: "Admin"`.
+  - Block a user → their login returns 401 → their refresh returns 401.
+  - Delete a user → confirm their refresh-token rows are gone too.
 
-**Namespaces you will need:** `Microsoft.AspNetCore.Authorization`, `Microsoft.AspNetCore.Identity`
+**Namespaces you will need:** `Microsoft.AspNetCore.Authorization`, `Microsoft.AspNetCore.Identity`, `Microsoft.EntityFrameworkCore`
 
-**Classes you will use:** `RoleManager<IdentityRole>`, `IdentityRole`
+**Classes you will use:** `RoleManager<IdentityRole>`, `IdentityRole`, `UserManager<ApplicationUser>`
 
 ### Nudges
 
 - `app.Services.CreateScope()` must be inside a `using` block or the scope will not be disposed.
-- `RoleManager.RoleExistsAsync(name)` returns `bool` — no need to handle a null case.
-- For the first admin user (chicken-and-egg problem): seed an initial admin directly in the startup seeding block using `UserManager` alongside the role seeding, or create one manually in the DB.
-- If `[Authorize(Roles = "Admin")]` returns 403 instead of 401, it means authentication succeeded but the role claim is missing — check that roles are included in the JWT in `TokenService`.
+- Bulk-revoking a user's refresh tokens is the same `ExecuteUpdateAsync` you wrote for reuse detection in Ch7 — you now call it from three places, which is the signal to extract a small helper.
+- "Yourself" is `User.FindFirstValue(ClaimTypes.NameIdentifier)` compared against the route `id`.
+- Lockout only applies when `user.LockoutEnabled` is true — `Lockout.AllowedForNewUsers` defaults to `true`, so nothing extra to configure.
+- If `[Authorize(Roles = "Admin")]` returns 403 instead of 401, authentication succeeded but the role claim is missing — check that roles are included in the JWT in `TokenService`.
 
 ### Quiz — paste these into Claude one at a time
 
-1. Why do we seed roles at startup instead of creating them through an endpoint?
+1. Why do we seed roles at startup instead of creating them through an endpoint? (Hint: who *consumes* a role name?)
 2. What is the difference between `401 Unauthorized` and `403 Forbidden`? When does each occur?
 3. If an admin's role is changed in the database after they log in, will their existing JWT reflect the change? Why or why not?
 4. How does `[Authorize(Roles = "Admin")]` know what roles the user has without querying the database?
-5. What is the "chicken-and-egg" problem with the first admin user and how do you solve it?
+5. What is the "chicken-and-egg" problem with the first admin user, and why is "seed only when the users table is empty" safer than "seed if the admin account is missing"?
+6. Login already returns 401 for a locked-out user — so why must blocking also revoke their refresh tokens?
+7. An interviewer asks: "should you hard-delete or disable user accounts?" Argue both sides, and say which this API uses for which purpose.
 
 ---
 

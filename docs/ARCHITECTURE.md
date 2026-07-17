@@ -14,9 +14,12 @@ Identity.Api/
 │   ├── Auth/
 │   │   ├── AuthController.cs
 │   │   └── Dtos/                # RegisterRequest, LoginRequest, AuthResponse, ...
-│   └── Tokens/
-│       ├── ITokenService.cs
-│       └── TokenService.cs
+│   ├── Tokens/
+│   │   ├── ITokenService.cs
+│   │   └── TokenService.cs
+│   └── Users/
+│       ├── UsersController.cs   # admin-only user management (role, block, delete)
+│       └── Dtos/
 ├── Domain/                      # ApplicationUser, RefreshToken (the entities)
 ├── Infrastructure/
 │   └── Data/
@@ -33,7 +36,7 @@ Identity.Api/
 
 ## Why
 
-This is a **small** service: one controller, five endpoints, two entities, one service. Architecture exists to manage *change* and *complexity*, and there is very little of either here. So the real risk is **over-engineering**. A single feature-organized project matches the size of the problem, reads like the API surface, and evolves trivially into a layered design later if the service ever genuinely grows.
+This is a **small** service: two controllers, eight endpoints, two entities, one service. Architecture exists to manage *change* and *complexity*, and there is very little of either here. So the real risk is **over-engineering**. A single feature-organized project matches the size of the problem, reads like the API surface, and evolves trivially into a layered design later if the service ever genuinely grows.
 
 ## Alternatives considered
 
@@ -66,7 +69,7 @@ Status legend: **Decided** = build it this way; **Deferred** = revisit at the no
 | 4   | **Error handling**            | **ProblemDetails** (RFC 7807) on the wire + lightweight **Result pattern** internally | Decided      | See "Result pattern + ProblemDetails" below for how they fit together.                                                                                 |
 | 5   | **Global exception handling** | **One global handler** (`IExceptionHandler`)                                          | Decided      | Keeps controllers clean; unexpected errors become a consistent ProblemDetails.                                                                         |
 | 6   | **Migrations**                | **Manual in dev, `MigrateAsync()` on boot in the container**                          | Decided      | Same migrations, two contexts: you run `dotnet ef database update` while developing (Ch4); the container applies them automatically on startup (Ch10). |
-| 7   | **First-admin bootstrap**     | **Seed from config** at startup                                                       | Decided      | `Seed:AdminEmail` / password seeded alongside roles. Solves the chicken-and-egg problem.                                                               |
+| 7   | **First-admin bootstrap**     | **Seed from config** at startup, **only when the users table is empty**               | Decided      | `Seed:AdminEmail` / `Seed:AdminPassword` seeded alongside roles; solves the chicken-and-egg problem. **Updated 2026-07-13 (Ch8 re-scope):** the whole seed block is guarded by an empty-users check — once real users exist it is permanently inert, so leaked seed config can never resurrect a deleted bootstrap admin. Deployed values arrive as env vars (`Seed__AdminEmail` / `Seed__AdminPassword`); `.env` is local-only and gitignored. Seeding is not an endpoint — no attack surface, the only risk is the credential leaking from the repo. |
 | 8   | **Testing**                   | **Unit tests + integration tests** (Testcontainers Postgres)                          | Decided      | Unit-test pure logic (e.g. `TokenService`); integration-test the auth flows over real HTTP + DB. Don't chase 100% coverage.                            |
 | 9   | **CORS**                      | **Explicit policy**, documented                                                       | Decided      | Add a named dev policy; document the allowed origins in the README.                                                                                    |
 | 10  | **Audience (`aud`) handling** | **Server-fixed** `aud` from `Jwt:Audience` config                                                                                   | Decided      | **Closed at Ch5 (2026-07-02):** the server stamps `aud`; clients never choose it. Every consumer API validates the same fixed value. Move to a server-side allowlist only if a real per-consumer need appears.  |
@@ -77,6 +80,8 @@ Status legend: **Decided** = build it this way; **Deferred** = revisit at the no
 | 15  | **Reuse detection**           | Revoked token presented at `/refresh` ⇒ revoke the user's **whole token family**      | Decided      | This is what makes rotation actually catch a stolen token. Legitimate user just logs in again.                                                                                          |
 | 16  | **Token service location**    | `Features/Tokens/` (move from `Services/`)                                            | Decided      | Matches the decided feature-organized layout; one folder move + namespace update.                                                                                                       |
 | 17  | **Refresh-token purge**       | Daily `BackgroundService` deletes rows where `ExpiresAt < UtcNow - 30 days`           | Decided — **not yet built** | **Decided 2026-07-07, deliberately deferred to ~Ch11+ (alongside AuthService/observability work).** Purge on *expiry*, never on revocation: revoked-but-unexpired rows are the reuse-detection tripwire (#15); expired rows are inert (present or absent, the endpoint returns 401). The 30-day tail keeps `ReplacedByToken` chains for forensics, then data-minimization says drop them. Use `ExecuteDeleteAsync` (one SQL `DELETE`, no tracking). Gotcha: `BackgroundService` is a singleton — inject `IServiceScopeFactory` and create a scope per tick to get the scoped `DbContext`. Rejected: pg_cron (logic leaves the codebase), purge-on-login (janitorial work in the hot path), per-user token cap (different problem). |
+| 18  | **User management shape (Ch8 re-scope)** | Single public `POST /register` (always role `User`) + admin-only `PUT /api/users/{id}/role`; **no** `/register-admin`, **no** dynamic role-creation endpoint | Decided 2026-07-13 | `/register-admin` meant an admin chooses another admin's *password* — an anti-pattern; real systems let people self-register and get *promoted*. Role names are compile-time contracts with consumer APIs (`[Authorize(Roles = ...)]` is compiled in), so a runtime role-creation endpoint inserts rows no code checks — rejected as dead weight (KISS). Role change: replace semantics, validate `RoleExistsAsync` first (the EF store's `AddToRoleAsync` throws on a missing role), **revoke the target's refresh tokens**, reject changing your own role (last-admin lockout guard). Old access tokens keep stale roles ≤15 min — the accepted cost of stateless JWTs. |
+| 19  | **Account block / delete**    | Block = Identity lockout (`SetLockoutEndDateAsync(user, DateTimeOffset.MaxValue)`), unblock = `null`; plus hard `DELETE /api/users/{id}` | Decided 2026-07-13 | Use case: give a reviewer/interviewer temporary access, then shut it off. Block reuses the lockout machinery `CheckPasswordSignInAsync` already enforces (#12) — login stays a uniform 401, zero new auth logic. **Blocking must also revoke the user's refresh tokens**: `/refresh` never checks a password, so an unrevoked refresh token sails past lockout. Hard delete covers account cleanup; disabling (block) is the soft-delete story for real customer data. Self-targeting is rejected on all admin user-management endpoints. |
 
 
 ### Result pattern + ProblemDetails
