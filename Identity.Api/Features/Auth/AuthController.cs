@@ -8,6 +8,7 @@ using Identity.Api.Infrastructure.Data;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.RateLimiting;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
 using SignInResult = Microsoft.AspNetCore.Identity.SignInResult;
@@ -26,6 +27,7 @@ public class AuthController(
     private readonly JwtOptions _jwt = jwtOptions.Value;
 
     [HttpPost("register")]
+    [EnableRateLimiting("auth")]
     public async Task<IActionResult> RegisterAsync(RegisterRequest request)
     {
         var user = new ApplicationUser
@@ -54,6 +56,7 @@ public class AuthController(
     }
 
     [HttpPost("login")]
+    [EnableRateLimiting("auth")]
     public async Task<IActionResult> LoginAsync(LoginRequest request)
     {
         ApplicationUser? user = await userManager.FindByEmailAsync(request.Email);
@@ -103,6 +106,7 @@ public class AuthController(
         Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(token)));
 
     [HttpPost("refresh")]
+    [EnableRateLimiting("auth")]
     public async Task<IActionResult> RefreshAsync(RefreshTokenRequest request)
     {
         string hashedToken = HashToken(request.RefreshToken);
