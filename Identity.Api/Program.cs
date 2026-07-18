@@ -75,6 +75,13 @@ builder.Services.AddRateLimiter(options =>
 
 WebApplication app = builder.Build();
 
+if (!app.Environment.IsDevelopment())
+{
+    using IServiceScope scope = app.Services.CreateScope();
+    ApplicationDbContext dbContext = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
+    await dbContext.Database.MigrateAsync();
+}
+
 await app.SeedIdentityDataAsync();
 
 if (app.Environment.IsDevelopment())

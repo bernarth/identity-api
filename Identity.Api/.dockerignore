@@ -1,0 +1,10 @@
+bin/
+obj/
+
+appsettings.Development.json
+appsettings.*.local.json
+.env
+*.env.local
+
+Dockerfile
+.dockerignore
